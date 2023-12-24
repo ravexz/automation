@@ -1,45 +1,63 @@
+import mysql.connector
+from mysql.connector import errorcode
 import pandas as pd
-import pymysql.cursors
+from datetime import datetime
 
 # Replace these with your actual database connection details
 db_params = {
-    'host': 'localhost',
-    'database': 'collections',
-    'user': 'root',
-    'password': 'K1pd3K23',
-    'charset': 'utf8mb4',
-    'cursorclass': pymysql.cursors.DictCursor,
+    "host": "localhost",
+    "database": "gtfl",
+    "user": "root",
+    "password": "K1pd3K23",
 }
 
-# Connect to the MySQL database
-conn = pymysql.connect(**db_params)
+def fetch_and_calculate():
+    try:
+        # Connect to the MySQL database
+        connection = mysql.connector.connect(**db_params)
+        cursor = connection.cursor()
 
-# Replace 'your_table_name' with the actual table name
-table_name = 'farmers'
+        # Fetch data from collections and prices tables
+        query = """
+            SELECT c.farmerno,
+                   MONTH(c.date) AS month,
+                   SUM(p.field_pay * c.fieldweight) AS total_payment
+            FROM collections c
+            JOIN prices p ON c.route = p.route
+            WHERE c.date BETWEEN '2023-01-01' AND '2023-01-31'
+            GROUP BY c.farmerno, month
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
 
-# Query to get the data
-query = f"SELECT FarmerNo, Route, Date FROM {table_name}"
+        # Create a DataFrame from the results
+        columns = ["farmerno", "month", "total_payment"]
+        df = pd.DataFrame(results, columns=columns)
 
-# Read data into a DataFrame, skipping the first row (header)
-df = pd.read_sql_query(query, conn, header=0, skiprows=1)
+        # Display the result
+        print("farmerno | month | total_payment")
+        print("--------------------------------")
+        for row in results:
+            print(f"{row[0]} | {row[1]} | {row[2]:.2f}")
 
-# Convert 'Date' column to datetime type
-df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
+        # Save the DataFrame to an Excel file
+        file_name = "result_january.xlsx"
+        df.to_excel(file_name, index=False)
+        print(f"\nExcel file '{file_name}' created successfully.")
 
-# Filter growers with collections from multiple routes
-multiple_routes = df.groupby('FarmerNo')['Route'].nunique() > 2
-result_df = df[df['FarmerNo'].isin(multiple_routes[multiple_routes].index)]
+    except mysql.connector.Error as err:
+        if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
+            print("Error: Access denied.")
+        elif err.errno == errorcode.ER_BAD_DB_ERROR:
+            print("Error: Database does not exist.")
+        else:
+            print(f"Error: {err}")
 
-# Save the result to an Excel file
-result_df.to_excel('multiple_routes.xlsx', index=False)
+    finally:
+        # Close the database connection
+        if connection:
+            cursor.close()
+            connection.close()
 
-# Example: Update a column in the MySQL table (replace with your actual update logic)
-update_query = f"UPDATE {table_name} SET some_column = 'some_value' WHERE FarmerNo IN ({', '.join(map(str, result_df['FarmerNo']))})"
-with conn.cursor() as cursor:
-    cursor.execute(update_query)
-    conn.commit()
-
-# Close the database connection
-conn.close()
-
-print("Excel file 'multiple_routes.xlsx' has been generated, and data in MySQL has been updated.")
+if __name__ == "__main__":
+    fetch_and_calculate()
